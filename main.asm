@@ -1,17 +1,28 @@
 .model tiny
 
+; Agreement on code comments:
+;   [8] refers to Tom Swan's book "Mastering Turbo Assmbler, 2nd edition"
 
 TAIL_BYTES EQU 80h
 TAIL_START EQU 81h
 TAIL_LENGTH EQU 127
 
+.data?
+    ; Define variables
+    ;   Declaring uninitialized variables decrease the file size
+    ;   [8], page 25
+    filename  db TAIL_LENGTH DUP(?)
+    code      db 10000 DUP(?)
+    cells     db 10000 DUP(?)
+    ; TODO: investigate `mov cx, 10000` -> `cld` -> `rep stosb`
+    ; Book: [8], page: 137
 
 .code
 org 100h
 
 main PROC
-    
-    ; Read file: http://vitaly_filatov.tripod.com/ng/asm/asm_010.64.html
+    mov ax, cs
+    mov es, ax
 
     xor   bx, bx
     mov   bl, [0h:TAIL_BYTES]
@@ -29,13 +40,6 @@ main PROC
     ; mov ax, 4C00h  ; Close and flish all open file handles.
     ; int 21h
     ret
-
-    ; Define variables
-    code       db 10000 DUP(0)
-    cells      db 10000 DUP(0)
-    filename   db TAIL_LENGTH DUP(0)
-    ; TODO: investigate `mov cx, 10000` -> `cld` -> `rep stosb`
-    ; Book: [8], page: 137
 main ENDP
 
 
