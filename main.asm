@@ -54,7 +54,7 @@ readCommandTail PROC
     ; Registers used:
     ;   si, di, cx
     ; Output: 
-    ;   [filename] string    
+    ;   [filename] ASCIIZ string
     cld                         ; clear direction (flag)
     mov si, TAIL_START+1        ; read from tail start (ignore leading whitespace)
     mov di, offset filename     ; write to variable
@@ -71,7 +71,7 @@ readCode PROC
     ; Registers used:
     ;   ax, dx, bx, cx
     ; Output: 
-    ;   
+    ;   [code] ASCIIZ string
     lea dx, filename
     mov ah, 03Dh        ; Open file DOS function
     mov al, 0           ; Read-only mode
@@ -92,7 +92,18 @@ readCode ENDP
 
 
 decodeCommand PROC NEAR
-    xor ax, ax
+    ; Input:
+    ;   [code] ASCIIZ string
+    ; Registers used:
+    ;   ax, bx - temporary registers
+    ;   cx - command index
+    ;   dx - cell index
+    ;   si, di - string I/O
+    ; Output:
+    ;   None
+    mov cl, code
+    mov dx, cells
+
 decodeCommand ENDP
 
 
