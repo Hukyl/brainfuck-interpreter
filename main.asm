@@ -144,13 +144,41 @@ readLabel:
     call readChar
     jmp exitDecode
 start_loop:
-    inc [loopCounter]
+    call startLoop
     jmp exitDecode
 end_loop:
     call endLoop
 exitDecode:
     ret
 decodeCommand ENDP
+
+
+startLoop PROC NEAR
+    mov bx, [loopCounter]   ; Storing counter to account for inner loops
+    cmp word ptr [di], 0
+    je findClosingBracket
+    inc [loopCounter]
+    jmp endStartLoop
+findClosingBracket:
+    lodsb
+    cmp al, '['
+    je _metInnerLoop
+    cmp al, ']'
+    jne findClosingBracket
+    ; If loopCounter == bx, we reached the end of required loop
+    ; Else continue searching
+    cmp bx, [loopCounter]
+    je endStartLoop
+    dec [loopCounter]
+    jmp findOpeningBracket
+_metInnerLoop:
+    ; If we met ending of an inner loop, we have to account for
+    ; it by incrementing loopCounter
+    inc [loopCounter]
+    jmp findClosingBracket
+endStartLoop:
+    ret
+startLoop ENDP
 
 
 endLoop PROC NEAR
@@ -170,7 +198,6 @@ endLoop PROC NEAR
 
     cmp word ptr [di], 0
     je finishLoop
-    dec word ptr [di]
     sub si, 2               ; As si points at char after ]
     mov bx, [loopCounter]   ; Storing counter to account for inner loops
     std                     ; Move si backwards on lodsb
@@ -231,6 +258,10 @@ readChar PROC NEAR
     mov bx, 0       ; Stdin
     mov cx, 1       ; 1 bytes
     int 21h
+    cmp byte ptr [di], CR
+    jne endReadChar
+    mov word ptr [di], 0FFFFh
+endReadChar:
     ret
 readChar ENDP
 
