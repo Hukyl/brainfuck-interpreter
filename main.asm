@@ -250,13 +250,14 @@ readChar PROC NEAR
     ; Input:
     ;   di - cell address 
     ; Registers used:
-    ;   ax, bx, si
+    ;   ax, bx, cx, dx
     ; Output:
     ;   None
     ; TODO: DRY
     mov ah, 3Fh     ; Read from file DOS function        
     mov bx, 0       ; Stdin
     mov cx, 1       ; 1 bytes
+    mov dx, di
     int 21h
     cmp byte ptr [di], CR
     jne endReadChar
