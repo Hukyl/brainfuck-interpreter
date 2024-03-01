@@ -1,0 +1,10 @@
+# Linker files
+*.obj
+*.map
+
+# Compiled executables
+*.exe
+*.com
+
+# Personal choice
+debug/
