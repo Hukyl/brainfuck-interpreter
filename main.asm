@@ -1,8 +1,5 @@
 .model tiny
 
-; Agreement on code comments:
-;   [8] refers to Tom Swan's book "Mastering Turbo Assmbler, 2nd edition"
-
 
 ;;;;;;;;;;;;;;;;;;;;;;; Constants ;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 CODE_SIZE   EQU 10000
@@ -17,7 +14,6 @@ CR          EQU 13
 .data
     loopCounter dw 0
     isHalted    db 0
-    direction   dw 1
 
 .data?
     filename    db TAIL_LENGTH    DUP(?)
@@ -60,12 +56,13 @@ readCode:
 
     mov si, offset code
     mov di, offset cells
+    mov bp, 1
     ; Preparations for I/O
     mov dx, di    
     mov cx, 1       ; 1 bytes
 decodeLoop:
     mov al, byte [si-1]
-    add si, direction
+    add si, bp
     ; lodsb   ; al <- [ds:si], si <- si + 1
     call decodeCommand
     cmp al, 0
@@ -84,6 +81,9 @@ decodeCommand PROC NEAR
     ;   di - cell address
     ; Registers used:
     ;   bx - loop counter on start of halt
+    ;   [loopCounter] - loop counter
+    ;   [isHalted] - whether to execute next command (ignored for `[` and `]`)
+    ;   bp - how much for si to move
     ; Output:
     ;   None
     cmp al, '['
@@ -127,17 +127,18 @@ decrementValue:
 writeChar:
     mov ah, 40h     ; Write to file DOS function
     mov bx, 1       ; Stdout
+    mov dx, di
     int 21h
     jmp exitDecode
 
 readChar:
     mov ah, 3Fh     ; Read from file DOS function        
     mov bx, 0       ; Stdin
+    mov dx, di
     int 21h
     cmp byte ptr [di], CR
     jne exitDecode
     mov word ptr [di], 0FFFFh
-    jmp exitDecode
 
 exitDecode:
     ret
@@ -159,7 +160,6 @@ startLoop:
     ;           decrement loop counter
     ;   else
     ;       increment loop counter
-    ;
     cmp isHalted, 0
     jne _sl_halted
 
@@ -193,13 +193,13 @@ endLoop:
     jne _el_halted
 
     ; If not halted
-    neg [direction]
+    neg bp
     mov [isHalted], 1
     sub si, 2
     jmp _rememberLoopCounter
 _el_halted:
     ; If halted
-    cmp [direction], 1
+    cmp bp, 1
     jne _incrementLoopCounter
 
     ; if moving forward
@@ -218,7 +218,7 @@ _el_halted:
 
 _sl_halted:
     ; If execution is halted
-    cmp [direction], 1
+    cmp bp, 1
     je _incrementLoopCounter
     
     ; If moving backwards
@@ -228,7 +228,7 @@ _sl_halted:
 
     ; If loop counter == loop counter on halt
     add si, 2
-    neg [direction]
+    neg bp
     mov [isHalted], 0
     jmp startLoop
 
