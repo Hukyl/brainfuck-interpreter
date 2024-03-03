@@ -29,10 +29,13 @@ org 100h
 main PROC
     mov ax, cs      ; IMPORTANT: do not change `ds` before `readCommandTail`
     mov es, ax      ; Since variables are stored in the code segment
+
+    ; Prepare di for readCommandTail and dx for readCode
+    mov di, offset filename
+    mov dx, di
 readCommandTail:
     cld                         ; clear direction (flag)
     mov si, TAIL_START+1        ; read from tail start (ignore leading whitespace)
-    mov di, offset filename     ; write to variable
     mov cl, byte [si-3]         ; number of bytes to read (ignore ^Z and whitespace char)
     dec cl
     rep movsb
@@ -40,7 +43,6 @@ readCommandTail:
 
     mov ds, ax
 readCode:
-    mov dx, offset filename
     mov ax, 3D00h           ; ax = Open file DOS function, al = Read-only mode
     int 21h
     ; No error checking, since is guaranteed by requirements
@@ -48,17 +50,18 @@ readCode:
     mov ah, 3Fh             ; Read file DOS function
     mov cx, CODE_SIZE       ; Number of bytes to read
     mov dx, offset code     ; Where to store the code
+
+    mov si, dx              ; Prepare si for decodeLoop
+
     int 21h
     mov ah, 3Eh             ; Close file DOS function
     ; bx is preset to file handle
     int 21h
 ; end of proc
 
-    mov si, offset code
     mov di, offset cells
     mov bp, 1
     ; Preparations for I/O
-    mov dx, di    
     mov cx, 1       ; 1 bytes
 decodeLoop:
     mov al, byte [si-1]
