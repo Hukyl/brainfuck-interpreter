@@ -113,7 +113,10 @@ decodeCommand:
     cmp al, '-'
     je SHORT decrementValue
     
-    mov cx, 1       ; If we reached here, we know that isHalted=0, so we can set cx as #bytes for I/O
+    ; If we reached here, we know that isHalted=0,
+    ; so we can prepare for I/O
+    mov cx, 1       
+    mov dx, di
     cmp al, '.'
     je SHORT writeChar
     cmp al, ','
@@ -141,16 +144,13 @@ decrementValue:
 
 writeChar:
     mov ah, 40h     ; Write to file DOS function
-    mov bx, 1       ; Stdout
-    mov cx, 1       
-    mov dx, di      ; Which character to write
+    mov bx, 1       ; Stdout     
     int 21h
     jmp SHORT _io_commands
 
 readChar:
     mov ah, 3Fh     ; Read from file DOS function        
     mov bx, 0       ; Stdin
-    mov dx, di      ; To which cell to write to
     int 21h
     cmp byte ptr [di], CR
     jne _io_commands
