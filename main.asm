@@ -11,10 +11,6 @@ TAIL_LENGTH EQU 127
 CR          EQU 13
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-.data
-    loopCounter dw 0
-    isHalted    db 0
-
 .data?
     filename    db TAIL_LENGTH    DUP(?)
     code        db CODE_SIZE      DUP(?)
@@ -22,9 +18,8 @@ CR          EQU 13
     ; TODO: investigate `mov cx, 10000` -> `cld` -> `rep stosb`
     ; Book: [8], page: 137
 
-
 .code
-org 100h
+    org 100h        ; Account for 255 bytes of PSP
 
 main PROC
     mov ax, cs      ; IMPORTANT: do not change `ds` before `readCommandTail`
@@ -34,14 +29,24 @@ main PROC
     mov di, offset filename
     mov dx, di
 readCommandTail:
-    cld                         ; clear direction (flag)
-    mov si, TAIL_START+1        ; read from tail start (ignore leading whitespace)
-    mov cl, byte [si-3]         ; number of bytes to read (ignore ^Z and whitespace char)
+    ; cld                     ; clear direction (flag)
+    mov si, TAIL_START+1    ; read from tail start (ignore leading whitespace)
+    mov cl, byte [si-3]     ; number of bytes to read (ignore ^Z and whitespace char)
     dec cl
+    mov bx, cx              ; Remember the length of filename
     rep movsb
 ; end of proc
 
     mov ds, ax
+clearUninitializedVariables:
+    mov di, dx
+    add di, bx
+    mov cx, CODE_SIZE+CELLS_SIZE*2+TAIL_LENGTH       ; length of uninitialized data
+    sub cx, bx
+    xor ax, ax
+    rep stosb
+
+    mov di, dx
 readCode:
     mov ax, 3D00h           ; ax = Open file DOS function, al = Read-only mode
     int 21h
@@ -60,91 +65,100 @@ readCode:
 ; end of proc
 
     mov di, offset cells
-    mov bp, 1
-    ; Preparations for I/O
-    mov cx, 1       ; 1 bytes
+    ; .data block, but with registers
+    mov cl, 0       ; isHalted OR number of bytes for I/O
+    mov bp, 1       ; Direction
+    mov sp, 0       ; loopCounter
+    ; end .data
+
 decodeLoop:
     mov al, byte [si-1]
     add si, bp
     ; lodsb   ; al <- [ds:si], si <- si + 1
-    call decodeCommand
+    jmp decodeCommand
+_afterDecode:
     cmp al, 0
     jne decodeLoop
     ; Possible replace to `int 20h`
     ; mov ax, 4C00h  ; Close and flish all open file handles.
     ; int 21h
-    ret
-main ENDP
+    int 20h
 
-
-decodeCommand PROC NEAR
+decodeCommand:
     ; Input:
     ;   al - command char
     ;   si - command address
     ;   di - cell address
     ; Registers used:
-    ;   bx - loop counter on start of halt
-    ;   [loopCounter] - loop counter
-    ;   [isHalted] - whether to execute next command (ignored for `[` and `]`)
-    ;   bp - how much for si to move
+    ;   bx - loop counter on start of halt OR file handle (when one is used, the other one is not)
+    ;   sp - loop counter
+    ;   cx - whether to execute next command (ignored for `[` and `]`)
+    ;   bp - how much for si to move (direction)
     ; Output:
     ;   None
     cmp al, '['
-    je startLoop
+    je SHORT startLoop
     cmp al, ']'
-    je endLoop
+    je SHORT endLoop
 
-    cmp [isHalted], 1
-    je exitDecode
+    cmp cl, 1       ; check if isHalted
+    je SHORT exitDecode
 
     cmp al, '>'
-    je incrementPointer
+    je SHORT incrementPointer
     cmp al, '<'
-    je decrementPointer
+    je SHORT decrementPointer
     cmp al, '+'
-    je incrementValue
+    je SHORT incrementValue
     cmp al, '-'
-    je decrementValue
+    je SHORT decrementValue
+    
+    mov cx, 1       ; If we reached here, we know that isHalted=0, so we can set cx as #bytes for I/O
     cmp al, '.'
-    je writeChar
+    je SHORT writeChar
     cmp al, ','
-    je readChar
+    je SHORT readChar
+_io_commands:
+    mov cl, 0       ; Restore isHalted to 0
+
     jmp exitDecode
 
 incrementPointer:
     add di, 2
-    jmp exitDecode
+    jmp SHORT exitDecode
 
 decrementPointer:
     sub di, 2
-    jmp exitDecode
+    jmp SHORT exitDecode
 
 incrementValue:
     inc word ptr [di]
-    jmp exitDecode
+    jmp SHORT exitDecode
 
 decrementValue:
     dec word ptr [di]
-    jmp exitDecode
+    jmp SHORT exitDecode
 
 writeChar:
     mov ah, 40h     ; Write to file DOS function
     mov bx, 1       ; Stdout
-    mov dx, di
+    mov cx, 1       
+    mov dx, di      ; Which character to write
     int 21h
-    jmp exitDecode
+    jmp SHORT _io_commands
 
 readChar:
     mov ah, 3Fh     ; Read from file DOS function        
     mov bx, 0       ; Stdin
-    mov dx, di
+    mov dx, di      ; To which cell to write to
     int 21h
     cmp byte ptr [di], CR
-    jne exitDecode
+    jne _io_commands
     mov word ptr [di], 0FFFFh
+    jmp _io_commands
 
-exitDecode:
-    ret
+exitDecode:             ; Short jump to exitDecode from all commands
+    jmp _afterDecode    ; Long jump to end of decoding current command
 
 startLoop:
     ; If execution is not halted
@@ -163,18 +177,18 @@ startLoop:
     ;           decrement loop counter
     ;   else
     ;       increment loop counter
-    cmp isHalted, 0
-    jne _sl_halted
+    cmp cl, 1       ; check if halted
+    je SHORT _sl_halted
 
     ; If execution is not halted (other branch in _sl_halted)
     cmp word ptr [di], 0
-    jne _incrementLoopCounter
+    jne SHORT _incrementLoopCounter
 
     ; If cell == 0
-    mov [isHalted], 1
+    mov cl, 1       ; Halt execution
 _rememberLoopCounter:
-    mov bx, [loopCounter]
-    jmp exitDecode
+    mov bx, sp      ; Remember the loop count
+    jmp SHORT exitDecode
 
 endLoop:
     ; if execution is halted
@@ -192,58 +206,58 @@ endLoop:
     ;   halt execution
     ;   remember loop counter on halt
     ;   si -= 2
-    cmp isHalted, 0
-    jne _el_halted
+    cmp cl, 1       ; check whether is halted
+    je SHORT _el_halted
 
     ; If not halted
-    neg bp
-    mov [isHalted], 1
-    sub si, 2
-    jmp _rememberLoopCounter
+    neg bp          ; move backwards
+    mov cl, 1       ; halt
+    sub si, 2       ; to avoid reading the same bracket
+    jmp SHORT _rememberLoopCounter
 _el_halted:
     ; If halted
-    cmp bp, 1
-    jne _incrementLoopCounter
+    cmp bp, 1                   ; 
+    jne SHORT _incrementLoopCounter
 
     ; if moving forward
-    cmp bx, [loopCounter]
-    jne _decrementLoopCounter
+    cmp bx, sp                  ; If met
+    jne SHORT _decrementLoopCounter
 
     ; Found end of loop
-    mov [isHalted], 0
-    jmp exitDecode
+    mov cl, 0
+    jmp SHORT exitDecode
 
     ; For 80386/486 processor (replace after `cmp`) (decrease by 1 instruction):
-    ; setnz [isHalted]        ; unhalt if equal, else keep halting
+    ; setnz cl        ; unhalt if equal, else keep halting
     ; jne exitDecode
-    ; dec [loopCounter]
+    ; dec sp
     ; jmp exitDecode
 
 _sl_halted:
     ; If execution is halted
-    cmp bp, 1
-    je _incrementLoopCounter
+    cmp bp, 1                   ; check if moving forward
+    je SHORT _incrementLoopCounter
     
     ; If moving backwards
-    cmp bx, [loopCounter]
-    dec [loopCounter]
-    jne exitDecode
+    cmp bx, sp                  ; check if met the same loop beginning
+    dec sp
+    jne SHORT exitDecode
 
     ; If loop counter == loop counter on halt
-    add si, 2
-    neg bp
-    mov [isHalted], 0
-    jmp startLoop
+    add si, 2                   ; to avoid reading the same bracket
+    neg bp                      ; move forward
+    mov cl, 0                   ; unhalt
+    jmp SHORT startLoop
 
 
 _incrementLoopCounter:
-    inc [loopCounter]
-    jmp exitDecode
+    inc sp
+    jmp SHORT exitDecode
 
 _decrementLoopCounter:
-    dec [loopCounter]
-    jmp exitDecode
+    dec sp
+    jmp SHORT exitDecode
 
-decodeCommand ENDP
+main ENDP
 
 END main
