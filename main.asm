@@ -165,11 +165,13 @@ startLoop:
     ;   If cell == 0
     ;       halt execution
     ;       remember loop counter on halt
+    ;       increment loop counter
     ;   else
     ;       increment loop counter
     ; else
     ;   if direction flag is set (moving backwards)
     ;       if loop counter == loop counter on halt
+    ;           decrement loop counter
     ;           si += 2
     ;           clear direction flag
     ;           jmp startLoop
@@ -240,15 +242,14 @@ _sl_halted:
     
     ; If moving backwards
     cmp bx, sp                  ; check if met the same loop beginning
-    dec sp
-    jne SHORT exitDecode
+    jne SHORT _decrementLoopCounter
 
     ; If loop counter == loop counter on halt
     add si, 2                   ; to avoid reading the same bracket
     neg bp                      ; move forward
     mov cl, 0                   ; unhalt
+    dec sp                      ; decrement loop counter for it to be incremented upon startLoop
     jmp SHORT startLoop
-
 
 _incrementLoopCounter:
     inc sp
