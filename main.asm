@@ -1,269 +1,264 @@
 .model tiny
 
-; Agreement on code comments:
-;   [8] refers to Tom Swan's book "Mastering Turbo Assmbler, 2nd edition"
-
 
 ;;;;;;;;;;;;;;;;;;;;;;; Constants ;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 CODE_SIZE   EQU 10000
 CELLS_SIZE  EQU 10000
 
-TAIL_BYTES  EQU 80h
 TAIL_START  EQU 81h
 TAIL_LENGTH EQU 127
 
 CR          EQU 13
-LF          EQU 10
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-
 .data?
-    ; Define variables
-    ;   Declaring uninitialized variables decrease the file size
-    ;   [8], page 25
     filename    db TAIL_LENGTH    DUP(?)
     code        db CODE_SIZE      DUP(?)
     cells       dw CELLS_SIZE     DUP(?)
-    loopCounter dw 0
     ; TODO: investigate `mov cx, 10000` -> `cld` -> `rep stosb`
     ; Book: [8], page: 137
 
-
 .code
-org 100h
+    org 100h        ; Account for 255 bytes of PSP
 
 main PROC
     mov ax, cs      ; IMPORTANT: do not change `ds` before `readCommandTail`
     mov es, ax      ; Since variables are stored in the code segment
-    call readCommandTail
+
+    ; Prepare di for readCommandTail and dx for readCode
+    mov di, offset filename
+    mov dx, di
+readCommandTail:
+    ; cld                     ; clear direction (flag)
+    mov si, TAIL_START+1    ; read from tail start (ignore leading whitespace)
+    mov cl, byte [si-3]     ; number of bytes to read (ignore ^Z and whitespace char)
+    dec cl
+    mov bx, cx              ; Remember the length of filename
+    rep movsb
+; end of proc
 
     mov ds, ax
-    call readCode
+clearUninitializedVariables:
+    mov di, dx
+    add di, bx
+    mov cx, CODE_SIZE+CELLS_SIZE*2+TAIL_LENGTH       ; length of uninitialized data
+    sub cx, bx
+    xor ax, ax
+    rep stosb
 
-    xor cx, cx
-    mov si, offset code
-    mov di, offset cells
-decodeLoop:
-    lodsb   ; al <- [ds:si], si <- si + 1
-    call decodeCommand
-    cmp al, 0
-    jne decodeLoop
-    ; Possible replace to `int 20h`
-    ; mov ax, 4C00h  ; Close and flish all open file handles.
-    ; int 21h
-    ret
-main ENDP
-
-
-readCommandTail PROC
-    ; Input: 
-    ;   none
-    ; Registers used:
-    ;   si, di, cx
-    ; Output: 
-    ;   [filename] ASCIIZ string
-    cld                         ; clear direction (flag)
-    mov si, TAIL_START+1        ; read from tail start (ignore leading whitespace)
-    mov di, offset filename     ; write to variable
-    mov cl, byte [si-3]         ; number of bytes to read (ignore ^Z and whitespace char)
-    dec cx
-    rep movsb
-    ret
-readCommandTail ENDP
-
-
-readCode PROC
-    ; Input: 
-    ;   [filename] string
-    ; Registers used:
-    ;   ax, dx, bx, cx
-    ; Output: 
-    ;   [code] ASCIIZ string
-    mov dx, offset filename
-    mov ah, 03Dh        ; Open file DOS function
-    mov al, 0           ; Read-only mode
+    mov di, dx
+readCode:
+    mov ax, 3D00h           ; ax = Open file DOS function, al = Read-only mode
     int 21h
-
     ; No error checking, since is guaranteed by requirements
     mov bx, ax              ; File handle
     mov ah, 3Fh             ; Read file DOS function
     mov cx, CODE_SIZE       ; Number of bytes to read
     mov dx, offset code     ; Where to store the code
-    int 21h
 
-    mov ah, 3Eh         ; Close file DOS function
+    mov si, dx              ; Prepare si for decodeLoop
+
+    int 21h
+    mov ah, 3Eh             ; Close file DOS function
     ; bx is preset to file handle
     int 21h
-    ret
-readCode ENDP
+; end of proc
 
+    mov di, offset cells
+    ; .data block, but with registers
+    mov cl, 0       ; isHalted OR number of bytes for I/O
+    mov bp, 1       ; Direction
+    mov sp, 0       ; loopCounter
+    ; end .data
 
-decodeCommand PROC NEAR
+decodeLoop:
+    mov al, byte [si-1]
+    add si, bp
+    ; lodsb   ; al <- [ds:si], si <- si + 1
+    jmp decodeCommand
+_afterDecode:
+    cmp al, 0
+    jne decodeLoop
+    ; Possible replace to `int 20h`
+    ; mov ax, 4C00h  ; Close and flish all open file handles.
+    ; int 21h
+    int 20h
+
+decodeCommand:
     ; Input:
-    ;   [loopCount] - number of loops
+    ;   al - command char
     ;   si - command address
     ;   di - cell address
     ; Registers used:
-    ;   see used procedures
+    ;   bx - loop counter on start of halt OR file handle (when one is used, the other one is not)
+    ;   sp - loop counter
+    ;   cx - whether to execute next command (ignored for `[` and `]`)
+    ;   bp - how much for si to move (direction)
     ; Output:
     ;   None
+    cmp al, '['
+    je SHORT startLoop
+    cmp al, ']'
+    je SHORT endLoop
+
+    cmp cl, 1       ; check if isHalted
+    je SHORT exitDecode
 
     cmp al, '>'
-    je incrementPointer
+    je SHORT incrementPointer
     cmp al, '<'
-    je decrementPointer
+    je SHORT decrementPointer
     cmp al, '+'
-    je incrementValue
+    je SHORT incrementValue
     cmp al, '-'
-    je decrementValue
+    je SHORT decrementValue
+    
+    ; If we reached here, we know that isHalted=0,
+    ; so we can prepare for I/O
+    mov cx, 1       
+    mov dx, di
     cmp al, '.'
-    je writeLabel
+    je SHORT writeChar
     cmp al, ','
-    je readLabel
-    cmp al, '['
-    je start_loop
-    cmp al, ']'
-    je end_loop
+    je SHORT readChar
+_io_commands:
+    mov cl, 0       ; Restore isHalted to 0
+
     jmp exitDecode
+
 incrementPointer:
     add di, 2
-    jmp exitDecode
+    jmp SHORT exitDecode
+
 decrementPointer:
     sub di, 2
-    jmp exitDecode
+    jmp SHORT exitDecode
+
 incrementValue:
     inc word ptr [di]
-    jmp exitDecode
+    jmp SHORT exitDecode
+
 decrementValue:
     dec word ptr [di]
-    jmp exitDecode
-writeLabel:
-    call writeChar
-    jmp exitDecode
-readLabel:
-    call readChar
-    jmp exitDecode
-start_loop:
-    call startLoop
-    jmp exitDecode
-end_loop:
-    call endLoop
-exitDecode:
-    ret
-decodeCommand ENDP
+    jmp SHORT exitDecode
 
-
-startLoop PROC NEAR
-    mov bx, [loopCounter]   ; Storing counter to account for inner loops
-    cmp word ptr [di], 0
-    je findClosingBracket
-    inc [loopCounter]
-    jmp endStartLoop
-findClosingBracket:
-    lodsb
-    cmp al, '['
-    je _metInnerLoop
-    cmp al, ']'
-    jne findClosingBracket
-    ; If loopCounter == bx, we reached the end of required loop
-    ; Else continue searching
-    cmp bx, [loopCounter]
-    je endStartLoop
-    dec [loopCounter]
-    jmp findOpeningBracket
-_metInnerLoop:
-    ; If we met ending of an inner loop, we have to account for
-    ; it by incrementing loopCounter
-    inc [loopCounter]
-    jmp findClosingBracket
-endStartLoop:
-    ret
-startLoop ENDP
-
-
-endLoop PROC NEAR
-    ; endLoop tries to finish the loop, or jump to the beginning if counter != 0.
-    ; Upon seeing inner loops:
-    ;   1. Check if [loopCounter] == starting loop count
-    ;   2. If not, continue moving to the left.
-    ;   3. Else, finish
-    ; Input:
-    ;   di - cell address
-    ;   si - command address
-    ;   [loopCounter] - current loop count
-    ; Registers used:
-    ;   bx - storing starting loop count
-    ; Output:
-    ;   None
-
-    cmp word ptr [di], 0
-    je finishLoop
-    sub si, 2               ; As si points at char after ]
-    mov bx, [loopCounter]   ; Storing counter to account for inner loops
-    std                     ; Move si backwards on lodsb
-findOpeningBracket:
-    lodsb
-    cmp al, ']'
-    je metInnerLoop
-    cmp al, '['
-    jne findOpeningBracket
-    ; If loopCounter == bx, we reached the start of required loop
-    ; Else continue searching
-    cmp bx, [loopCounter]
-    je resetSI
-    dec [loopCounter]
-    jmp findOpeningBracket
-metInnerLoop:
-    ; If we met ending of an inner loop, we have to account for
-    ; it by incrementing loopCounter
-    inc [loopCounter]
-    jmp findOpeningBracket
-resetSI:
-    cld         ; Move si forward on lodsb
-    add si, 2   ; As si points at char before [
-    jmp exitLoopProc
-finishLoop:
-    dec [loopCounter]
-exitLoopProc:
-    ret
-endLoop ENDP
-
-
-writeChar PROC NEAR
-    ; Input:
-    ;   di - cell address
-    ;   dx - cell address 
-    ; Registers used:
-    ;   ax, bx, si
-    ; Output:
-    ;   None
+writeChar:
     mov ah, 40h     ; Write to file DOS function
-    mov bx, 1       ; Stdout
-    mov cx, 1       ; 1 bytes
-    mov dx, di
+    mov bx, 1       ; Stdout     
     int 21h
-    ret
-writeChar ENDP
+    jmp SHORT _io_commands
 
-
-readChar PROC NEAR
-    ; Input:
-    ;   di - cell address 
-    ; Registers used:
-    ;   ax, bx, cx, dx
-    ; Output:
-    ;   None
-    ; TODO: DRY
+readChar:
     mov ah, 3Fh     ; Read from file DOS function        
     mov bx, 0       ; Stdin
-    mov cx, 1       ; 1 bytes
-    mov dx, di
     int 21h
     cmp byte ptr [di], CR
-    jne endReadChar
+    jne _io_commands
     mov word ptr [di], 0FFFFh
-endReadChar:
-    ret
-readChar ENDP
+    jmp _io_commands
+
+exitDecode:             ; Short jump to exitDecode from all commands
+    jmp _afterDecode    ; Long jump to end of decoding current command
+
+startLoop:
+    ; If execution is not halted
+    ;   If cell == 0
+    ;       halt execution
+    ;       remember loop counter on halt
+    ;       increment loop counter
+    ;   else
+    ;       increment loop counter
+    ; else
+    ;   if direction flag is set (moving backwards)
+    ;       if loop counter == loop counter on halt
+    ;           decrement loop counter
+    ;           si += 2
+    ;           clear direction flag
+    ;           jmp startLoop
+    ;       else
+    ;           decrement loop counter
+    ;   else
+    ;       increment loop counter
+    cmp cl, 1       ; check if halted
+    je SHORT _sl_halted
+
+    ; If execution is not halted (other branch in _sl_halted)
+    cmp word ptr [di], 0
+    jne SHORT _incrementLoopCounter
+
+    ; If cell == 0
+    mov cl, 1       ; Halt execution
+_rememberLoopCounter:
+    mov bx, sp      ; Remember the loop count
+    jmp SHORT exitDecode
+
+endLoop:
+    ; if execution is halted
+    ;   if direction flag is set (moving backwards)
+    ;       increment loop counter
+    ;   else
+    ;       if loop counter == loop counter on halt
+    ;           decrement loop counter
+    ;           unhalt execution
+    ;           jmp exitDecode
+    ;       else
+    ;           decrement loop counter 
+    ; else
+    ;   set direction flag
+    ;   halt execution
+    ;   remember loop counter on halt
+    ;   si -= 2
+    cmp cl, 1       ; check whether is halted
+    je SHORT _el_halted
+
+    ; If not halted
+    neg bp          ; move backwards
+    mov cl, 1       ; halt
+    sub si, 2       ; to avoid reading the same bracket
+    jmp SHORT _rememberLoopCounter
+_el_halted:
+    ; If halted
+    cmp bp, 1                   ; 
+    jne SHORT _incrementLoopCounter
+
+    ; if moving forward
+    cmp bx, sp                  ; If met
+    jne SHORT _decrementLoopCounter
+
+    ; Found end of loop
+    mov cl, 0
+    jmp SHORT exitDecode
+
+    ; For 80386/486 processor (replace after `cmp`) (decrease by 1 instruction):
+    ; setnz cl        ; unhalt if equal, else keep halting
+    ; jne exitDecode
+    ; dec sp
+    ; jmp exitDecode
+
+_sl_halted:
+    ; If execution is halted
+    cmp bp, 1                   ; check if moving forward
+    je SHORT _incrementLoopCounter
+    
+    ; If moving backwards
+    cmp bx, sp                  ; check if met the same loop beginning
+    jne SHORT _decrementLoopCounter
+
+    ; If loop counter == loop counter on halt
+    add si, 2                   ; to avoid reading the same bracket
+    neg bp                      ; move forward
+    mov cl, 0                   ; unhalt
+    dec sp                      ; decrement loop counter for it to be incremented upon startLoop
+    jmp SHORT startLoop
+
+_incrementLoopCounter:
+    inc sp
+    jmp SHORT exitDecode
+
+_decrementLoopCounter:
+    dec sp
+    jmp SHORT exitDecode
+
+main ENDP
 
 END main
