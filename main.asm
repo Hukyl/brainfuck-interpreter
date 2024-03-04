@@ -12,7 +12,6 @@ CR          EQU 13
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 .data?
-    filename    db TAIL_LENGTH    DUP(?)
     code        db CODE_SIZE      DUP(?)
     cells       dw CELLS_SIZE     DUP(?)
     ; TODO: investigate `mov cx, 10000` -> `cld` -> `rep stosb`
@@ -22,42 +21,35 @@ CR          EQU 13
     org 100h        ; Account for 255 bytes of PSP
 
 main PROC
-    mov ax, cs      ; IMPORTANT: do not change `ds` before `readCommandTail`
-    mov es, ax      ; Since variables are stored in the code segment
-
-    ; Prepare di for readCommandTail and dx for readCode
-    mov di, offset filename
-    mov dx, di
-readCommandTail:
-    ; cld                     ; clear direction (flag)
-    mov si, TAIL_START+1    ; read from tail start (ignore leading whitespace)
-    mov cl, byte [si-3]     ; number of bytes to read (ignore ^Z and whitespace char)
-    dec cl
-    mov bx, cx              ; Remember the length of filename
-    rep movsb
-; end of proc
-
-    mov ds, ax
+    mov bx, cs      ; IMPORTANT: do not change `ds` before `readCommandTail`
+    mov es, bx      ; Since variables are stored in the code segment
 clearUninitializedVariables:
-    mov di, dx
-    add di, bx
-    mov cx, CODE_SIZE+CELLS_SIZE*2+TAIL_LENGTH       ; length of uninitialized data
-    sub cx, bx
+    mov di, offset code
+    mov cx, CODE_SIZE+CELLS_SIZE*2       ; length of uninitialized data
     xor ax, ax
     rep stosb
+;endp
 
-    mov di, dx
+prepareFilename:
+    ; Make filename ASCIIZ
+    mov dx, TAIL_START+1        ; Account for first whitespace
+    mov si, dx
+    mov cl, byte [si-3]
+    dec cl
+    add si, cx
+    mov byte ptr [si], 0
+;endp
+
 readCode:
     mov ax, 3D00h           ; ax = Open file DOS function, al = Read-only mode
     int 21h
     ; No error checking, since is guaranteed by requirements
+    mov ds, bx              ; move CS to DS
     mov bx, ax              ; File handle
     mov ah, 3Fh             ; Read file DOS function
     mov cx, CODE_SIZE       ; Number of bytes to read
     mov dx, offset code     ; Where to store the code
-
     mov si, dx              ; Prepare si for decodeLoop
-
     int 21h
     mov ah, 3Eh             ; Close file DOS function
     ; bx is preset to file handle
