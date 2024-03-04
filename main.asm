@@ -20,24 +20,23 @@ CR          EQU 13
 .code
     org 100h        ; Account for 255 bytes of PSP
 
-main PROC
+main:
     mov bx, cs      ; IMPORTANT: do not change `ds` before `readCommandTail`
     mov es, bx      ; Since variables are stored in the code segment
 clearUninitializedVariables:
     mov di, offset code
     mov cx, CODE_SIZE+CELLS_SIZE*2       ; length of uninitialized data
-    xor ax, ax
+    ; assume ax=0
     rep stosb
 ;endp
 
 prepareFilename:
     ; Make filename ASCIIZ
-    mov dx, TAIL_START+1        ; Account for first whitespace
+    mov dx, TAIL_START+1                    ; Account for first whitespace
     mov si, dx
-    mov cl, byte [si-3]
-    dec cl
-    add si, cx
-    mov byte ptr [si], 0
+    mov cl, byte ptr [ds:TAIL_START-1]
+    add si, cx                              ; length of command tail
+    mov byte ptr [si-1], 0
 ;endp
 
 readCode:
@@ -250,7 +249,5 @@ _incrementLoopCounter:
 _decrementLoopCounter:
     dec sp
     jmp SHORT exitDecode
-
-main ENDP
 
 END main
