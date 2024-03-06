@@ -40,7 +40,7 @@ prepareFilename:
 ;endp
 
 readCode:
-    mov ax, 3D00h           ; ax = Open file DOS function, al = Read-only mode
+    mov ax, 3D00h           ; ah = Open file DOS function, al = Read-only mode
     int 21h
     ; No error checking, since is guaranteed by requirements
     mov ds, bx              ; move CS to DS
@@ -56,35 +56,31 @@ readCode:
 ; end of proc
 
     mov di, offset cells
-    ; .data block, but with registers
-    mov cl, 0       ; isHalted OR number of bytes for I/O
-    mov bp, 1       ; Direction
-    mov sp, 0       ; loopCounter
-    ; end .data
+; .data block, but with registers
+    mov ah, 0       ; isHalted
+    xor bp, bp      ; loopCounter
+    mov cx, 1       ; direction OR number of bytes for I/O
+; end .data
 
 decodeLoop:
     mov al, byte [si-1]
-    add si, bp
+    add si, cx
     ; lodsb   ; al <- [ds:si], si <- si + 1
-    jmp decodeCommand
-_afterDecode:
+    call decodeCommand
     cmp al, 0
     jne decodeLoop
-    ; Possible replace to `int 20h`
-    ; mov ax, 4C00h  ; Close and flish all open file handles.
-    ; int 21h
     int 20h
 
-decodeCommand:
+decodeCommand PROC
     ; Input:
     ;   al - command char
     ;   si - command address
     ;   di - cell address
     ; Registers used:
     ;   bx - loop counter on start of halt OR file handle (when one is used, the other one is not)
-    ;   sp - loop counter
-    ;   cx - whether to execute next command (ignored for `[` and `]`)
-    ;   bp - how much for si to move (direction)
+    ;   bp - loop counter
+    ;   ah - whether to execute next command (ignored for `[` and `]`)
+    ;   cx - direction OR number of bytes for I/O
     ; Output:
     ;   None
     cmp al, '['
@@ -92,9 +88,11 @@ decodeCommand:
     cmp al, ']'
     je SHORT endLoop
 
-    cmp cl, 1       ; check if isHalted
-    je SHORT exitDecode
+    cmp ah, 1       ; check if isHalted
+    jne modifyingCommands
+    ret
 
+modifyingCommands:
     cmp al, '>'
     je SHORT incrementPointer
     cmp al, '<'
@@ -104,52 +102,47 @@ decodeCommand:
     cmp al, '-'
     je SHORT decrementValue
     
-    ; If we reached here, we know that isHalted=0,
-    ; so we can prepare for I/O
-    mov cx, 1       
+    ; If we reached here, we know that isHalted=0
     mov dx, di
     cmp al, '.'
     je SHORT writeChar
     cmp al, ','
     je SHORT readChar
-_io_commands:
-    mov cl, 0       ; Restore isHalted to 0
-
-    jmp exitDecode
+    ret
 
 incrementPointer:
     add di, 2
-    jmp SHORT exitDecode
+    ret
 
 decrementPointer:
     sub di, 2
-    jmp SHORT exitDecode
+    ret
 
 incrementValue:
     inc word ptr [di]
-    jmp SHORT exitDecode
+    ret
 
 decrementValue:
     dec word ptr [di]
-    jmp SHORT exitDecode
+    ret
 
 writeChar:
     mov ah, 40h     ; Write to file DOS function
     mov bx, 1       ; Stdout     
     int 21h
-    jmp SHORT _io_commands
+    jmp SHORT _io_commands_exit
 
 readChar:
     mov ah, 3Fh     ; Read from file DOS function        
     mov bx, 0       ; Stdin
     int 21h
     cmp byte ptr [di], CR
-    jne _io_commands
+    jne _io_commands_exit
     mov word ptr [di], 0FFFFh
-    jmp _io_commands
 
-exitDecode:             ; Short jump to exitDecode from all commands
-    jmp _afterDecode    ; Long jump to end of decoding current command
+_io_commands_exit:
+    mov ah, 0       ; Restore isHalted
+    ret
 
 startLoop:
     ; If execution is not halted
@@ -163,14 +156,14 @@ startLoop:
     ;   if direction flag is set (moving backwards)
     ;       if loop counter == loop counter on halt
     ;           decrement loop counter
-    ;           si += 2
+    ;           si += 1
     ;           clear direction flag
-    ;           jmp startLoop
+    ;           ret
     ;       else
     ;           decrement loop counter
     ;   else
     ;       increment loop counter
-    cmp cl, 1       ; check if halted
+    cmp ah, 1       ; check if halted
     je SHORT _sl_halted
 
     ; If execution is not halted (other branch in _sl_halted)
@@ -178,10 +171,27 @@ startLoop:
     jne SHORT _incrementLoopCounter
 
     ; If cell == 0
-    mov cl, 1       ; Halt execution
+    mov ah, 1       ; Halt execution
 _rememberLoopCounter:
-    mov bx, sp      ; Remember the loop count
-    jmp SHORT exitDecode
+    mov bx, bp      ; Remember the loop count
+    ret
+
+_sl_halted:
+    ; If execution is halted
+    ; FIXME: check direction flag
+    cmp cl, 1                   ; check if moving forward
+    je SHORT _incrementLoopCounter
+    
+    ; If moving backwards
+    cmp bx, bp                  ; check if met the same loop beginning
+    jne SHORT _decrementLoopCounter
+
+    ; If loop counter == loop counter on halt
+    add si, 1                   ; to avoid reading the same bracket
+    neg cx                      ; move forward
+    mov ah, 0                   ; unhalt
+    dec bp                      ; decrement loop counter for it to be incremented upon startLoop
+    ret
 
 endLoop:
     ; if execution is halted
@@ -191,7 +201,7 @@ endLoop:
     ;       if loop counter == loop counter on halt
     ;           decrement loop counter
     ;           unhalt execution
-    ;           jmp exitDecode
+    ;           ret
     ;       else
     ;           decrement loop counter 
     ; else
@@ -199,55 +209,41 @@ endLoop:
     ;   halt execution
     ;   remember loop counter on halt
     ;   si -= 2
-    cmp cl, 1       ; check whether is halted
+    cmp ah, 1       ; check whether is halted
     je SHORT _el_halted
 
     ; If not halted
-    neg bp          ; move backwards
-    mov cl, 1       ; halt
+    neg cx          ; move backwards
+    mov ah, 1       ; halt
     sub si, 2       ; to avoid reading the same bracket
     jmp SHORT _rememberLoopCounter
 _el_halted:
     ; If halted
-    cmp bp, 1                   ; 
+    cmp cl, 1                   ; Check direction
     jne SHORT _incrementLoopCounter
 
     ; if moving forward
-    cmp bx, sp                  ; If met
+    cmp bx, bp                  ; If met the same loop
     jne SHORT _decrementLoopCounter
 
     ; Found end of loop
-    mov cl, 0
-    jmp SHORT exitDecode
+    mov ah, 0                   ; unhalt
+    ret
 
     ; For 80386/486 processor (replace after `cmp`) (decrease by 1 instruction):
     ; setnz cl        ; unhalt if equal, else keep halting
     ; jne exitDecode
     ; dec sp
-    ; jmp exitDecode
-
-_sl_halted:
-    ; If execution is halted
-    cmp bp, 1                   ; check if moving forward
-    je SHORT _incrementLoopCounter
-    
-    ; If moving backwards
-    cmp bx, sp                  ; check if met the same loop beginning
-    jne SHORT _decrementLoopCounter
-
-    ; If loop counter == loop counter on halt
-    add si, 2                   ; to avoid reading the same bracket
-    neg bp                      ; move forward
-    mov cl, 0                   ; unhalt
-    dec sp                      ; decrement loop counter for it to be incremented upon startLoop
-    jmp SHORT startLoop
+    ; ret
 
 _incrementLoopCounter:
-    inc sp
-    jmp SHORT exitDecode
+    inc bp
+    ret
 
 _decrementLoopCounter:
-    dec sp
-    jmp SHORT exitDecode
+    dec bp
+    ret
+
+decodeCommand ENDP
 
 END main
