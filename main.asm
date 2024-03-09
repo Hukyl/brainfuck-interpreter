@@ -2,12 +2,13 @@
 
 
 ;------------------- Constants --------------------
-CODE_SIZE       EQU 10000
-CELLS_SIZE      EQU 10000
+CODE_SIZE       EQU 10001       ; Add terminating 0
+CELLS_SIZE      EQU 10001       ;
 
 TAIL_START      EQU 81h
 
-CR              EQU 13
+CR              EQU 0Dh
+LF              EQU 0Ah
 
 OPEN_FILE_FN    EQU 3Dh
 CLOSE_FILE_FN   EQU 3Eh
@@ -27,6 +28,7 @@ main:
     mov es, bp              ; Since variables are stored in the code segment.
 clearUninitializedVariables:
     mov di, offset code
+    mov si, di                              ; Prepare si for decodeLoop
     mov cx, CODE_SIZE+CELLS_SIZE*2          ; length of uninitialized data
     xor ax, ax                              ; Also prepare ah for Read-only mode
     rep stosb
@@ -48,8 +50,7 @@ readCode:
     mov bx, ax              ; File handle
     mov ah, READ_FILE_FN
     mov cx, CODE_SIZE       ; Number of bytes to read
-    mov dx, offset code     ; Where to store the code
-    mov si, dx              ; Prepare si for decodeLoop
+    mov dx, si              ; Where to store the code      
     int 21h
     mov ah, CLOSE_FILE_FN
     ; bx is preset to file handle
@@ -59,15 +60,14 @@ readCode:
 execution:
     mov di, offset cells
 ; .data block, but with registers
-    mov ah, 0               ; isHalted
+    xor ax, ax              ; isHalted
     xor bp, bp              ; loopCounter
     mov cx, 1               ; direction OR number of bytes for I/O
 ; end .data
 decodeLoop:
+    call decodeCommand
     mov al, byte [si-1]
     add si, cx
-    ; lodsb   ; al <- [ds:si], si <- si + 1
-    call decodeCommand
     cmp al, 0
     jne decodeLoop
     int 20h
@@ -102,8 +102,7 @@ decodeCommand PROC
     je SHORT _decrementValue
 _IOcommands:
     mov dx, di
-    mov ah, READ_FILE_FN    ; +1 - Read DOS function
-    xor bx, bx              ; Stdin file handle,  +1 - Stdout file handle               
+    xor bx, bx
     cmp al, ','
     je SHORT _readChar
     cmp al, '.'
@@ -128,19 +127,29 @@ _decrementValue:
     ret
 
 _writeChar:
-    inc ah
-    inc bx  
+    cmp byte ptr [di], LF   ; if see LF, also print CR
+    jne _writeSimpleChar
+    mov ah, 02h
+    mov dl, CR
     int 21h
-    jmp SHORT _IOcommandsExit
+_writeSimpleChar:
+    mov ah, 02h
+    mov dx, [di]
+    int 21h
+_writeCharExit:
+    ret
 
 _readChar:
+    mov ah, READ_FILE_FN
     int 21h
-    cmp byte ptr [di], CR
-    jne _IOcommandsExit
-    add [di], 0FFFFh - CR
 
-_IOcommandsExit:
-    mov ah, 0               ; Restore isHalted
+    or ax, ax               ; if reached EOF
+    jnz _checkLF
+    mov word ptr [di], 0FFFFh
+_checkLF:
+    cmp byte ptr [di], CR   ; Ignore CR (ODh OAh -> OAh)
+    je _readChar
+_readCharExit:
     ret
 
 _startLoop:
