@@ -2,12 +2,13 @@
 
 
 ;------------------- Constants --------------------
-CODE_SIZE       EQU 10000
-CELLS_SIZE      EQU 10000
+CODE_SIZE       EQU 10001       ; Add terminating 0
+CELLS_SIZE      EQU 10001       ;
 
 TAIL_START      EQU 81h
 
-CR              EQU 13
+CR              EQU 0Dh
+LF              EQU 0Ah
 
 OPEN_FILE_FN    EQU 3Dh
 CLOSE_FILE_FN   EQU 3Eh
@@ -27,6 +28,7 @@ main:
     mov es, bp              ; Since variables are stored in the code segment.
 clearUninitializedVariables:
     mov di, offset code
+    mov si, di                              ; Prepare si for decodeLoop
     mov cx, CODE_SIZE+CELLS_SIZE*2          ; length of uninitialized data
     xor ax, ax                              ; Also prepare ah for Read-only mode
     rep stosb
@@ -48,8 +50,7 @@ readCode:
     mov bx, ax              ; File handle
     mov ah, READ_FILE_FN
     mov cx, CODE_SIZE       ; Number of bytes to read
-    mov dx, offset code     ; Where to store the code
-    mov si, dx              ; Prepare si for decodeLoop
+    mov dx, si              ; Where to store the code      
     int 21h
     mov ah, CLOSE_FILE_FN
     ; bx is preset to file handle
@@ -57,22 +58,67 @@ readCode:
 ; end of proc
 
 execution:
+    cld
     mov di, offset cells
 ; .data block, but with registers
-    mov ah, 0               ; isHalted
-    xor bp, bp              ; loopCounter
+    xor ax, ax              ; isHalted
     mov cx, 1               ; direction OR number of bytes for I/O
 ; end .data
+
 decodeLoop:
-    mov al, byte [si-1]
-    add si, cx
-    ; lodsb   ; al <- [ds:si], si <- si + 1
-    call decodeCommand
+    ; Registers used:
+    ;   bx - stdin file handle OR temp register
+    ;   bp - address of si on halt
+    ;   check decodeModifyingCommand for more info    ;
+_startLoop:
+    cmp al, '['
+    jne _endLoop
+    ; push [ address onto stack
+    ; if cell == 0 && unhalted
+    ;   halt
+    ;   store halt address
+    push si                 ; push [ address onto stack
+    mov bx, [di]
+    add bl, ah
+    or bx, bx               ; check if cell == 0 && unhalted (ah = 0)
+    jnz _loadNextChar
+    inc ah                  ; halt
+    mov bp, si              ; store halt address
+    ; no jmp, will be checked by next cmp
+_endLoop:
+    cmp al, ']'
+    jne _checkIsHalted
+    ; pop [ address
+    ; if halted (ah=1)
+    ;   if popped address == halted address
+    ;       unhalt
+    ; else
+    ;   move execution to [ address
+    pop bx                  ; pop [ address + 1
+    or ah, ah
+    jnz _endLoopHalted
+    ; is unhalted
+    dec bx                  ; to reread [ command
+    mov si, bx
+_endLoopHalted:
+    cmp bx, bp
+    jne _loadNextChar
+    mov ah, 0
+    ; No jmp, no effect as al = ']'
+
+_checkIsHalted:
+    cmp ah, 1
+    je _loadNextChar
+
+    call decodeModifyingCommand
+    mov ah, 0               ; Restore isHalted
+_loadNextChar:
+    lodsb
     cmp al, 0
     jne decodeLoop
     int 20h
 
-decodeCommand PROC
+decodeModifyingCommand PROC
     ; Input:
     ;   al - command char
     ;   si - command address
@@ -84,13 +130,6 @@ decodeCommand PROC
     ;   cx - direction OR number of bytes for I/O
     ; Output:
     ;   None
-    cmp al, '['
-    je SHORT _startLoop
-    cmp al, ']'
-    je SHORT _endLoop
-
-    cmp ah, 1               ; check if isHalted
-    je _exitDecodeCommand
     ; If we reached here, we know that isHalted=0
     cmp al, '>'
     je SHORT _incrementPointer
@@ -101,14 +140,11 @@ decodeCommand PROC
     cmp al, '-'
     je SHORT _decrementValue
 _IOcommands:
-    mov dx, di
-    mov ah, READ_FILE_FN    ; +1 - Read DOS function
-    xor bx, bx              ; Stdin file handle,  +1 - Stdout file handle               
+    xor bx, bx
     cmp al, ','
     je SHORT _readChar
     cmp al, '.'
     je SHORT _writeChar
-_exitDecodeCommand:
     ret
 
 _incrementPointer:
@@ -128,120 +164,27 @@ _decrementValue:
     ret
 
 _writeChar:
-    inc ah
-    inc bx  
+    mov ah, 02h
+    cmp byte ptr [di], LF   ; if see LF, also print CR
+    jne _writeSimpleChar
+    mov dl, CR
     int 21h
-    jmp SHORT _IOcommandsExit
+_writeSimpleChar:
+    mov dx, [di]
+    int 21h
+    ret
 
 _readChar:
+    mov ah, READ_FILE_FN
+    mov dx, di
     int 21h
-    cmp byte ptr [di], CR
-    jne _IOcommandsExit
-    add [di], 0FFFFh - CR
-
-_IOcommandsExit:
-    mov ah, 0               ; Restore isHalted
+    or ax, ax               ; if reached EOF
+    jnz _checkLF
+    mov word ptr [di], 0FFFFh
+_checkLF:
+    cmp byte ptr [di], CR   ; Ignore CR (ODh OAh -> OAh)
+    je _readChar
     ret
-
-_startLoop:
-    ; If execution is not halted
-    ;   If cell == 0
-    ;       halt execution
-    ;       remember loop counter on halt
-    ;   else
-    ;       increment loop counter
-    ; else
-    ;   if direction flag is set (moving backwards)
-    ;       if loop counter == loop counter on halt
-    ;           decrement loop counter
-    ;           si += 1
-    ;           clear direction flag
-    ;           ret
-    ;       else
-    ;           decrement loop counter
-    ;   else
-    ;       increment loop counter
-    cmp ah, 1       ; check if halted
-    je SHORT _startLoopHalted
-
-    ; If execution is not halted
-    cmp word ptr [di], 0
-    jne SHORT _incrementLoopCounter
-
-    ; If cell == 0
-    mov ah, 1               ; Halt execution
-_rememberLoopCounter:
-    mov bx, bp              ; Remember the loop count
-    ret
-
-_startLoopHalted:
-    ; If execution is halted
-    ; FIXME: check direction flag
-    cmp cl, 1               ; check if moving forward
-    je SHORT _incrementLoopCounter
-    
-    ; If moving backwards
-    cmp bx, bp              ; check if met the same loop beginning
-    jne SHORT _decrementLoopCounter
-
-    ; If loop counter == loop counter on halt
-    add si, 1               ; to avoid reading the same bracket
-    neg cx                  ; move forward
-    mov ah, 0               ; unhalt
-    dec bp                  ; decrement loop counter for it to be incremented upon startLoop
-    ret
-
-_endLoop:
-    ; if execution is halted
-    ;   if direction flag is set (moving backwards)
-    ;       increment loop counter
-    ;   else
-    ;       if loop counter == loop counter on halt
-    ;           decrement loop counter
-    ;           unhalt execution
-    ;           ret
-    ;       else
-    ;           decrement loop counter 
-    ; else
-    ;   set direction flag
-    ;   halt execution
-    ;   remember loop counter on halt
-    ;   si -= 2
-    cmp ah, 1               ; check whether is halted
-    je SHORT _endLoopHalted
-
-    ; If not halted
-    neg cx                  ; move backwards
-    mov ah, 1               ; halt
-    sub si, 2               ; to avoid reading the same bracket
-    jmp SHORT _rememberLoopCounter
-_endLoopHalted:
-    ; If halted
-    cmp cl, 1               ; Check direction
-    jne SHORT _incrementLoopCounter
-
-    ; if moving forward
-    cmp bx, bp              ; If met the same loop
-    jne SHORT _decrementLoopCounter
-
-    ; Found end of loop
-    mov ah, 0               ; unhalt
-    ret
-
-    ; For 80386/486 processor (replace after `cmp`) (decrease by 1 instruction):
-    ; setnz cl        ; unhalt if equal, else keep halting
-    ; jne exitDecode
-    ; dec sp
-    ; ret
-
-_incrementLoopCounter:
-    inc bp
-    ret
-
-_decrementLoopCounter:
-    dec bp
-    ret
-
-decodeCommand ENDP
+decodeModifyingCommand ENDP
 
 END main
