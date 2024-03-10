@@ -110,15 +110,7 @@ _checkIsHalted:
     cmp ah, 1
     je _loadNextChar
 
-    call decodeModifyingCommand
-    mov ah, 0               ; Restore isHalted
-_loadNextChar:
-    lodsb
-    cmp al, 0
-    jne decodeLoop
-    int 20h
-
-decodeModifyingCommand PROC
+decodeModifyingCommand:
     ; Input:
     ;   al - command char
     ;   si - command address
@@ -132,48 +124,28 @@ decodeModifyingCommand PROC
     ;   None
     ; If we reached here, we know that isHalted=0
     cmp al, '>'
-    je SHORT _incrementPointer
-    cmp al, '<'
-    je SHORT _decrementPointer
-    cmp al, '+'
-    je SHORT _incrementValue
-    cmp al, '-'
-    je SHORT _decrementValue
-_IOcommands:
-    xor bx, bx
-    cmp al, ','
-    je SHORT _readChar
-    cmp al, '.'
-    je SHORT _writeChar
-    ret
-
-_incrementPointer:
+    jne SHORT _decrementPointer
     add di, 2
-    ret
 
 _decrementPointer:
+    cmp al, '<'
+    jne SHORT _incrementValue
     sub di, 2
-    ret
 
 _incrementValue:
+    cmp al, '+'
+    jne SHORT _decrementValue
     inc word ptr [di]
-    ret
 
 _decrementValue:
+    cmp al, '-'
+    jne SHORT _checkReadChar
     dec word ptr [di]
-    ret
 
-_writeChar:
-    mov ah, 02h
-    cmp byte ptr [di], LF   ; if see LF, also print CR
-    jne _writeSimpleChar
-    mov dl, CR
-    int 21h
-_writeSimpleChar:
-    mov dx, [di]
-    int 21h
-    ret
-
+_checkReadChar:
+    xor bx, bx
+    cmp al, ','
+    jne _checkWriteChar
 _readChar:
     mov ah, READ_FILE_FN
     mov dx, di
@@ -184,7 +156,24 @@ _readChar:
 _checkLF:
     cmp byte ptr [di], CR   ; Ignore CR (ODh OAh -> OAh)
     je _readChar
-    ret
-decodeModifyingCommand ENDP
 
+_checkWriteChar:
+    cmp al, '.'             ; not influenced by prev command, as ax = 0 OR 1
+    jne _exitDecodeCommand
+    mov ah, 02h
+    cmp byte ptr [di], LF   ; if see LF, also print CR
+    jne _writeSimpleChar
+    mov dl, CR
+    int 21h
+_writeSimpleChar:
+    mov dx, [di]
+    int 21h
+
+_exitDecodeCommand:
+    mov ah, 0               ; Restore isHalted
+_loadNextChar:
+    lodsb
+    cmp al, 0
+    jne decodeLoop
+    int 20h
 END main
