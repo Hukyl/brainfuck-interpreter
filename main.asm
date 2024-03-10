@@ -110,19 +110,17 @@ _checkIsHalted:
     cmp ah, 1
     je _loadNextChar
 
+    ; If we reached here, we know that isHalted=0
 decodeModifyingCommand:
     ; Input:
     ;   al - command char
     ;   si - command address
     ;   di - cell address
     ; Registers used:
-    ;   bx - loop counter on start of halt OR file handle (when one is used, the other one is not)
-    ;   bp - loop counter
-    ;   ah - whether to execute next command (ignored for `[` and `]`)
-    ;   cx - direction OR number of bytes for I/O
+    ;   bx - file handle
+    ;   cx - number of bytes for I/O
     ; Output:
     ;   None
-    ; If we reached here, we know that isHalted=0
     cmp al, '>'
     jne SHORT _decrementPointer
     add di, 2
