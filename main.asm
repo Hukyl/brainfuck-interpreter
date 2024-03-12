@@ -26,6 +26,7 @@ WRITE_FILE_FN   EQU 40h
 main:
     mov bp, cs              ; IMPORTANT: do not change `ds` before `readCommandTail`.
     mov es, bp              ; Since variables are stored in the code segment.
+    cld
 clearUninitializedVariables:
     mov di, offset code
     mov si, di                              ; Prepare si for decodeLoop
@@ -57,59 +58,41 @@ readCode:
     int 21h
 ; end of proc
 
-execution:
-    cld
     mov di, offset cells
-; .data block, but with registers
-    xor ax, ax              ; isHalted
-    mov cx, 1               ; direction OR number of bytes for I/O
-; end .data
-
+    mov cx, 1               ; loop halt counter, counting from 1
 decodeLoop:
-    ; Registers used:
-    ;   bx - stdin file handle OR temp register
-    ;   bp - address of si on halt
-    ;   check decodeModifyingCommand for more info    ;
-_startLoop:
     cmp al, '['
-    jne _endLoop
+    jne _endLoopCheck
+_startLoop:
     ; push [ address onto stack
-    ; if cell == 0 && unhalted
-    ;   halt
-    ;   store halt address
+    ; if cell == 0
+    ;   increment halted loop count
     push si                 ; push [ address onto stack
-    mov bx, [di]
-    add bl, ah
-    or bx, bx               ; check if cell == 0 && unhalted (ah = 0)
+    cmp word ptr [di], 0
     jnz _loadNextChar
-    inc ah                  ; halt
-    mov bp, si              ; store halt address
+    inc cx
     ; no jmp, will be checked by next cmp
-_endLoop:
+_endLoopCheck:
     cmp al, ']'
     jne _checkIsHalted
+_endLoop:
     ; pop [ address
-    ; if halted (ah=1)
-    ;   if popped address == halted address
-    ;       unhalt
-    ; else
-    ;   move execution to [ address
+    ; dec halted loop count
+    ; if halted loop count < 0
+    ;   inc halted loop count
+    ;   jmp to popped address
     pop bx                  ; pop [ address + 1
-    or ah, ah
-    jnz _endLoopHalted
-    ; is unhalted
-    dec bx                  ; to reread [ command
+    dec cx
+    cmp cx, 1
+    jge _loadNextChar
+    inc cx
+    dec bx
     mov si, bx
-_endLoopHalted:
-    cmp bx, bp
-    jne _loadNextChar
-    mov ah, 0
     ; No jmp, no effect as al = ']'
 
 _checkIsHalted:
-    cmp ah, 1
-    je _loadNextChar
-
+    cmp cx, 1
+    jg _loadNextChar
     ; If we reached here, we know that isHalted=0
 decodeModifyingCommand:
     ; Input:
@@ -152,12 +135,13 @@ _readChar:
     jnz _checkLF
     mov word ptr [di], 0FFFFh
 _checkLF:
-    cmp byte ptr [di], CR   ; Ignore CR (ODh OAh -> OAh)
+    cmp byte ptr [di], CR   ; Ignore CR (0Dh 0Ah -> 0Ah)
     je _readChar
 
 _checkWriteChar:
     cmp al, '.'             ; not influenced by prev command, as ax = 0 OR 1
-    jne _exitDecodeCommand
+    jne _loadNextChar
+_writeChar:
     mov ah, 02h
     cmp byte ptr [di], LF   ; if see LF, also print CR
     jne _writeSimpleChar
@@ -167,8 +151,6 @@ _writeSimpleChar:
     mov dx, [di]
     int 21h
 
-_exitDecodeCommand:
-    mov ah, 0               ; Restore isHalted
 _loadNextChar:
     lodsb
     cmp al, 0
