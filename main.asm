@@ -24,9 +24,6 @@ WRITE_FILE_FN   EQU 40h
     org 100h                ; Account for 255 bytes of PSP
 
 main:
-    mov bp, cs              ; IMPORTANT: do not change `ds` before `readCommandTail`.
-    mov es, bp              ; Since variables are stored in the code segment.
-    cld
 clearUninitializedVariables:
     mov di, offset code
     mov si, di                              ; Prepare si for decodeLoop
@@ -36,7 +33,7 @@ clearUninitializedVariables:
 ;endp
 
 prepareFilename:                            ; Make filename ASCIIZ
-    mov dx, TAIL_START+1                    ; Account for first whitespace
+    mov dx, TAIL_START+1                    ; Account for first whitespace  
     mov bx, dx
     add bl, byte ptr [ds:TAIL_START-1]      ; length of command tail     
     mov byte ptr [bx-1], 0
@@ -47,7 +44,6 @@ readCode:
     ; dx is preset to ASCIIZ filename
     int 21h
     ; No error checking, since is guaranteed by requirements
-    mov ds, bp              ; move CS to DS
     mov bx, ax              ; File handle
     mov ah, READ_FILE_FN
     mov cx, CODE_SIZE       ; Number of bytes to read
@@ -106,12 +102,14 @@ decodeModifyingCommand:
     ;   None
     cmp al, '>'
     jne SHORT _decrementPointer
-    add di, 2
+    inc di
+    inc di
 
 _decrementPointer:
     cmp al, '<'
     jne SHORT _incrementValue
-    sub di, 2
+    dec di
+    dec di
 
 _incrementValue:
     cmp al, '+'
