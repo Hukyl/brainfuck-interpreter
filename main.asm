@@ -55,8 +55,9 @@ readCode:
 ; end of proc
 
     mov di, offset cells
-    mov cx, 1               ; loop halt counter, counting from 1
+    xor cx, cx              ; loop halt counter
 decodeLoop:
+    xor bx, bx
     cmp al, '['
     jne _endLoopCheck
 _startLoop:
@@ -64,7 +65,7 @@ _startLoop:
     ; if cell == 0
     ;   increment halted loop count
     push si                 ; push [ address onto stack
-    cmp word ptr [di], 0
+    cmp word ptr [di], bx   ; bx at the start of loop =0
     jnz _loadNextChar
     inc cx
     ; no jmp, will be checked by next cmp
@@ -79,16 +80,15 @@ _endLoop:
     ;   jmp to popped address
     pop bx                  ; pop [ address + 1
     dec cx
-    cmp cx, 1
-    jge _loadNextChar
+    jns _loadNextChar       ; if cx was 0, signed flag is set
     inc cx
     dec bx
     mov si, bx
     ; No jmp, no effect as al = ']'
 
 _checkIsHalted:
-    cmp cx, 1
-    jg _loadNextChar
+    or cx, cx
+    jnz _loadNextChar
     ; If we reached here, we know that isHalted=0
 decodeModifyingCommand:
     ; Input:
@@ -122,9 +122,9 @@ _decrementValue:
     dec word ptr [di]
 
 _checkReadChar:
-    xor bx, bx
     cmp al, ','
     jne _checkWriteChar
+    inc cx                  ; loop halt counter=0, but #bytes has to be 1
 _readChar:
     mov ah, READ_FILE_FN
     mov dx, di
@@ -135,6 +135,7 @@ _readChar:
 _checkLF:
     cmp byte ptr [di], CR   ; Ignore CR (0Dh 0Ah -> 0Ah)
     je _readChar
+    dec cx                  ; restore halt counter
 
 _checkWriteChar:
     cmp al, '.'             ; not influenced by prev command, as ax = 0 OR 1
@@ -151,7 +152,7 @@ _writeSimpleChar:
 
 _loadNextChar:
     lodsb
-    cmp al, 0
+    or al, al
     jne decodeLoop
     int 20h
 END main
