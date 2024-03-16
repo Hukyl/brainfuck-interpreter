@@ -128,10 +128,11 @@ _checkReadChar:
 _readChar:
     mov ah, READ_FILE_FN
     mov dx, di
+    mov word ptr [di], bx   ; as bx=0
     int 21h
     or ax, ax               ; if reached EOF
     jnz _checkLF
-    mov word ptr [di], 0FFFFh
+    dec word ptr [di]
 _checkLF:
     cmp byte ptr [di], CR   ; Ignore CR (0Dh 0Ah -> 0Ah)
     je _readChar
