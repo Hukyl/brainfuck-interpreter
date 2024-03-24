@@ -45,16 +45,13 @@ readCode:
     ; No error checking, since is guaranteed by requirements
     mov bx, ax              ; File handle
     mov ah, READ_FILE_FN
-    mov cx, CODE_SIZE       ; Number of bytes to read
+    dec cx                  ; Number of bytes to read (0FFFFh)
     mov dx, si              ; Where to store the code      
-    int 21h
-    mov ah, CLOSE_FILE_FN
-    ; bx is preset to file handle
     int 21h
 ; end of proc
 
     mov di, offset cells
-    xor cx, cx              ; loop halt counter
+    inc cx                  ; halt loop counter (0FFFFh + 1 = 0h)
 decodeLoop:
     xor bx, bx
     cmp al, '['
