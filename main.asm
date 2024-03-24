@@ -33,10 +33,9 @@ clearUninitializedVariables:
 ;endp
 
 prepareFilename:                            ; Make filename ASCIIZ
-    mov dx, TAIL_START+1                    ; Account for first whitespace  
-    mov bx, dx
-    add bl, byte ptr [ds:TAIL_START-1]      ; length of command tail     
-    mov byte ptr [bx-1], 0
+    mov dx, TAIL_START+1                    ; Account for first whitespace
+    mov bx, [ds:TAIL_START-1]               ; length of command tail  
+    mov byte ptr [bx-2000h+81h], 0
 ;endp
 
 readCode:
