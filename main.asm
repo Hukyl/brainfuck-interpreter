@@ -126,9 +126,8 @@ _readChar:
     mov dx, di
     mov word ptr [di], bx   ; as bx=0
     int 21h
-    or ax, ax               ; if reached EOF
-    jnz _checkLF
-    dec word ptr [di]
+    dec ax                  
+    or word ptr [di], ax    ; if ax was 1, do nothing, else `or` with 0FFFFh.
 _checkLF:
     cmp byte ptr [di], CR   ; Ignore CR (0Dh 0Ah -> 0Ah)
     je _readChar
