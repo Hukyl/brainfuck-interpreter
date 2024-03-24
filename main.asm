@@ -33,10 +33,9 @@ clearUninitializedVariables:
 ;endp
 
 prepareFilename:                            ; Make filename ASCIIZ
-    mov dx, TAIL_START+1                    ; Account for first whitespace  
-    mov bx, dx
-    add bl, byte ptr [ds:TAIL_START-1]      ; length of command tail     
-    mov byte ptr [bx-1], 0
+    mov dx, TAIL_START+1                    ; Account for first whitespace
+    mov bx, [ds:TAIL_START-1]               ; length of command tail  
+    mov byte ptr [bx-2000h+81h], 0
 ;endp
 
 readCode:
@@ -46,16 +45,13 @@ readCode:
     ; No error checking, since is guaranteed by requirements
     mov bx, ax              ; File handle
     mov ah, READ_FILE_FN
-    mov cx, CODE_SIZE       ; Number of bytes to read
+    dec cx                  ; Number of bytes to read (0FFFFh)
     mov dx, si              ; Where to store the code      
-    int 21h
-    mov ah, CLOSE_FILE_FN
-    ; bx is preset to file handle
     int 21h
 ; end of proc
 
     mov di, offset cells
-    xor cx, cx              ; loop halt counter
+    inc cx                  ; halt loop counter (0FFFFh + 1 = 0h)
 decodeLoop:
     xor bx, bx
     cmp al, '['
@@ -130,9 +126,8 @@ _readChar:
     mov dx, di
     mov word ptr [di], bx   ; as bx=0
     int 21h
-    or ax, ax               ; if reached EOF
-    jnz _checkLF
-    dec word ptr [di]
+    dec ax                  
+    or word ptr [di], ax    ; if ax was 1, do nothing, else `or` with 0FFFFh.
 _checkLF:
     cmp byte ptr [di], CR   ; Ignore CR (0Dh 0Ah -> 0Ah)
     je _readChar
