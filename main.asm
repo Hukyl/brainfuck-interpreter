@@ -150,5 +150,5 @@ _loadNextChar:
     lodsb
     or al, al
     jne decodeLoop
-    int 20h
+    ret                     ; can be used instead of `int 20h`
 END main
